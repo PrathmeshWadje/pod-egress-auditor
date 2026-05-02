@@ -1,0 +1,99 @@
+# gke/egress-auditor.yaml
+
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: egress-auditor
+
+---
+
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: egress-auditor
+  namespace: egress-auditor
+spec:
+  selector:
+    matchLabels:
+      app: egress-auditor
+  template:
+    metadata:
+      labels:
+        app: egress-auditor
+    spec:
+      hostNetwork: true   # Observe node-level traffic, not just pod-network traffic
+      hostPID: true       # Host PID namespace access required for eBPF operations
+      serviceAccountName: egress-auditor-sa
+      containers:
+      - name: egress-auditor
+        image: <your-registry>/egress-auditor:latest
+        imagePullPolicy: Always
+        securityContext:
+          privileged: true  # Required to load eBPF programs into the kernel
+        env:
+        - name: NODE_NAME
+          valueFrom:
+            fieldRef:
+              fieldPath: spec.nodeName  # Downward API: each agent knows its own node
+        - name: EXCLUDE_NAMESPACES
+          value: "egress-auditor"       # Add kube-system, gmp-system etc. as needed
+        volumeMounts:
+          - name: btf
+            mountPath: /sys/kernel/btf
+            readOnly: true  # CO-RE reads kernel BTF data here at load time
+      volumes:
+        - name: btf
+          hostPath:
+            path: /sys/kernel/btf
+            type: Directory
+
+---
+
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: egress-auditor-sa
+  namespace: egress-auditor
+
+---
+
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: egress-auditor-role
+rules:
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list", "watch"]  # watch is required by the SharedInformer
+
+---
+
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: egress-auditor-binding
+subjects:
+  - kind: ServiceAccount
+    name: egress-auditor-sa
+    namespace: egress-auditor
+roleRef:
+  kind: ClusterRole
+  name: egress-auditor-role
+  apiGroup: rbac.authorization.k8s.io
+
+---
+
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: egress-auditor-config
+  namespace: egress-auditor
+data:
+  config.yaml: |
+    poll_interval: 60s            # not yet implemented — hardcoded in main.go
+    byte_threshold_warning: 1048576     # 1 MB  — not yet implemented
+    byte_threshold_critical: 10485760   # 10 MB — not yet implemented
+    exclude_namespaces:           # not yet implemented — use EXCLUDE_NAMESPACES env var
+      - kube-system
+      - gmp-system
+      - egress-auditor
