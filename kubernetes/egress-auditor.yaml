@@ -1,4 +1,4 @@
-# gke/egress-auditor.yaml
+# kubernetes/egress-auditor.yaml
 
 apiVersion: v1
 kind: Namespace
@@ -22,7 +22,10 @@ spec:
         app: egress-auditor
     spec:
       hostNetwork: true   # Observe node-level traffic, not just pod-network traffic
-      hostPID: true       # Host PID namespace access required for eBPF operations
+      # hostPID is intentionally omitted. A tcp_sendmsg kprobe does not require
+      # the host PID namespace. hostPID is only needed for tools that walk /proc
+      # to correlate process IDs; this tool attributes traffic via the Kubernetes
+      # API instead. Including it would be an unnecessary privilege escalation.
       serviceAccountName: egress-auditor-sa
       containers:
       - name: egress-auditor
@@ -89,11 +92,18 @@ metadata:
   name: egress-auditor-config
   namespace: egress-auditor
 data:
+  # ────────────────────────────────────────────────────────────────────────
+  # ROADMAP — none of these fields are read by the current version of the
+  # Go controller. Editing them has no effect on runtime behaviour.
+  # They are placeholders for planned future features. Use the
+  # EXCLUDE_NAMESPACES environment variable for namespace filtering today.
+  # Track progress: github.com/<your-username>/pod-egress-auditor/issues
+  # ────────────────────────────────────────────────────────────────────────
   config.yaml: |
-    poll_interval: 60s            # not yet implemented — hardcoded in main.go
+    poll_interval: 60s                  # not yet implemented
     byte_threshold_warning: 1048576     # 1 MB  — not yet implemented
     byte_threshold_critical: 10485760   # 10 MB — not yet implemented
-    exclude_namespaces:           # not yet implemented — use EXCLUDE_NAMESPACES env var
+    exclude_namespaces:                 # not yet implemented — use EXCLUDE_NAMESPACES env var
       - kube-system
       - gmp-system
       - egress-auditor
